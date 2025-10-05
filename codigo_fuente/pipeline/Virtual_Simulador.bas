@@ -1,48 +1,54 @@
 Attribute VB_Name = "Virtual_Simulador"
-' Simulador de Memoria Virtual - Módulo Único
+' Módulo: Virtual_Memory_Simulator
+' Descripción: Simulador de memoria virtual completo y funcional
+' Versión: 4.1 (Código corregido y optimizado)
+
+Option Explicit
+
+' =================== CONSTANTES ===================
+Private Const VM_SIZE As Integer = 256
+Private Const VM_ROWS As Integer = 16
+Private Const VM_COLS As Integer = 16
+
+' =================== TIPOS ===================
 Type MemoryCell
     address As String
     value As String
     instruction As String
-    dataType As String ' "INSTR", "DATA", "STACK", "FREE"
+    dataType As String
     Accessed As Boolean
     Modified As Boolean
 End Type
 
-' Variables globales de memoria
-Dim VirtualMemory() As MemoryCell
-Dim MemorySize As Long
-Dim ProgramCounter As Long
-Dim StackPointer As Long
+' =================== VARIABLES GLOBALES ===================
+Private VirtualMemory() As MemoryCell
+Private CurrentInstructionVM As Integer
+Private StackPointerVM As Integer
+Private AX As Long, BX As Long, CX As Long, DX As Long
+Private SI As Long, DI As Long, BP As Long, SP As Long
+Private Flags As Long
+Private IsRunning As Boolean
 
-' Registros del sistema
-Dim AX As Long, BX As Long, CX As Long, DX As Long
-Dim SI As Long, DI As Long, BP As Long, SP As Long
-Dim Flags As Long
-Dim IsRunning As Boolean
+' ===================================================================================
+' INICIALIZACIÓN
+' ===================================================================================
 
-' =============================================
-' INICIALIZACIÓN DE MEMORIA
-' =============================================
-
-Sub InitializeVirtualMemory(Optional size As Long = 512)
-    MemorySize = size
-    ReDim VirtualMemory(0 To MemorySize - 1)
+Sub InitializeVirtualMemorySimulator()
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
     
-    ' Inicializar punteros
-    ProgramCounter = 0
-    StackPointer = MemorySize - 1
+    ReDim VirtualMemory(0 To VM_SIZE - 1)
     
-    ' Inicializar registros
+    CurrentInstructionVM = 0
+    StackPointerVM = VM_SIZE - 1
     AX = 0: BX = 0: CX = 0: DX = 0
-    SI = 0: DI = 0: BP = 0: SP = MemorySize - 1
+    SI = 0: DI = 0: BP = 0: SP = VM_SIZE - 1
     Flags = 0
     IsRunning = False
     
-    ' Limpiar memoria
-    Dim i As Long
-    For i = 0 To MemorySize - 1
-        VirtualMemory(i).address = "0x" & Format(Hex(i), "0000")
+    Dim i As Integer
+    For i = 0 To VM_SIZE - 1
+        VirtualMemory(i).address = "0x" & Format(Hex(i), "00")
         VirtualMemory(i).value = "00"
         VirtualMemory(i).instruction = ""
         VirtualMemory(i).dataType = "FREE"
@@ -50,72 +56,75 @@ Sub InitializeVirtualMemory(Optional size As Long = 512)
         VirtualMemory(i).Modified = False
     Next i
     
-    ' Inicializar área de stack
-    For i = MemorySize - 50 To MemorySize - 1
+    For i = VM_SIZE - 32 To VM_SIZE - 1
         VirtualMemory(i).dataType = "STACK"
-        VirtualMemory(i).value = "00"
     Next i
     
-    CreateMemoryDisplay
-    UpdateRegisterDisplay
-    MsgBox "Memoria virtual inicializada: " & MemorySize & " bytes", vbInformation
+    CreateVMInterface
+    LoadProgramFromSheet
+    UpdateVMDisplay
+    UpdateRegisterDisplayVM
+    
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "Simulador de Memoria Virtual inicializado correctamente.", vbInformation
 End Sub
 
-' =============================================
-' OPERACIONES BÁSICAS DE MEMORIA
-' =============================================
+Sub ResetVirtualMemory()
+    CurrentInstructionVM = 0
+    InitializeVirtualMemorySimulator
+End Sub
 
-Function WriteMemory(address As Long, value As String, Optional dataType As String = "DATA") As Boolean
-    If address < 0 Or address >= MemorySize Then
-        MsgBox "Error: Dirección fuera de rango - " & address, vbCritical
-        WriteMemory = False
+' ===================================================================================
+' OPERACIONES DE MEMORIA
+' ===================================================================================
+
+Function WriteVMMemory(address As Integer, value As String, Optional dataType As String = "DATA") As Boolean
+    On Error GoTo ErrorHandler
+    If address < 0 Or address >= VM_SIZE Then
+        WriteVMMemory = False
         Exit Function
     End If
-    
     VirtualMemory(address).value = value
     VirtualMemory(address).dataType = dataType
     VirtualMemory(address).Modified = True
     VirtualMemory(address).Accessed = True
-    WriteMemory = True
-    
-    UpdateMemoryDisplay
+    WriteVMMemory = True
+    Exit Function
+ErrorHandler:
+    WriteVMMemory = False
 End Function
 
-Function ReadMemory(address As Long) As String
-    If address < 0 Or address >= MemorySize Then
-        MsgBox "Error: Dirección fuera de rango - " & address, vbCritical
-        ReadMemory = "ERROR"
+Function ReadVMMemory(address As Integer) As String
+    On Error GoTo ErrorHandler
+    If address < 0 Or address >= VM_SIZE Then
+        ReadVMMemory = "00"
         Exit Function
     End If
-    
     VirtualMemory(address).Accessed = True
-    ReadMemory = VirtualMemory(address).value
-    UpdateMemoryDisplay
+    ReadVMMemory = VirtualMemory(address).value
+    Exit Function
+ErrorHandler:
+    ReadVMMemory = "00"
 End Function
 
-' =============================================
+' ===================================================================================
 ' CARGA DE PROGRAMAS
-' =============================================
+' ===================================================================================
 
-Sub LoadProgramFromCodeSheet()
+Sub LoadProgramFromSheet()
     Dim ws As Worksheet
-    Set ws = ThisWorkbook.Sheets("CodigoFuente")
+    On Error Resume Next
+    Set ws = ThisWorkbook.Sheets("CodigoVM")
+    On Error GoTo 0
     
-    ' Encontrar última fila con código
-    Dim lastRow As Long
-    lastRow = 0
-    Dim i As Long
-    For i = 1 To 1000
-        If Trim(ws.Cells(i, 1).value) = "" Then
-            lastRow = i - 1
-            Exit For
-        End If
-    Next i
+    If ws Is Nothing Then
+        CreateSampleVMProgram
+        Set ws = ThisWorkbook.Sheets("CodigoVM")
+    End If
     
-    If lastRow = 0 Then lastRow = ws.Cells(ws.ROWS.count, "A").End(xlUp).row
-    
-    ' Limpiar área de instrucciones anterior
-    For i = 0 To MemorySize - 1
+    Dim i As Integer
+    For i = 0 To VM_SIZE - 1
         If VirtualMemory(i).dataType = "INSTR" Then
             VirtualMemory(i).instruction = ""
             VirtualMemory(i).value = "00"
@@ -123,308 +132,354 @@ Sub LoadProgramFromCodeSheet()
         End If
     Next i
     
-    ' Cargar nuevas instrucciones
-    Dim instructionCount As Long
+    Dim lastRow As Integer
+    lastRow = ws.Cells(ws.ROWS.count, "A").End(xlUp).row
+    If lastRow < 2 Then lastRow = 2
+    
+    Dim instructionCount As Integer
     instructionCount = 0
     
-    For i = 1 To lastRow
+    For i = 2 To lastRow
         Dim instruction As String
         instruction = Trim(ws.Cells(i, 1).value)
         
-        If instruction <> "" Then
-            If WriteMemory(i - 1, instruction, "INSTR") Then
-                VirtualMemory(i - 1).instruction = instruction
+        If instruction <> "" And Left(instruction, 1) <> ";" Then
+            Dim addr As Integer
+            addr = instructionCount
+            
+            If addr < VM_SIZE - 32 Then
+                VirtualMemory(addr).instruction = instruction
+                VirtualMemory(addr).value = Left(instruction, 10)
+                VirtualMemory(addr).dataType = "INSTR"
                 instructionCount = instructionCount + 1
             End If
         End If
     Next i
     
-    ProgramCounter = 0
-    UpdateMemoryDisplay
-    MsgBox "Programa cargado: " & instructionCount & " instrucciones", vbInformation
+    UpdateVMStatus "LISTO", "---", instructionCount & " instrucciones"
 End Sub
 
-' =============================================
-' EJECUCIÓN DE INSTRUCCIONES
-' =============================================
-
-Sub ExecuteFullProgram()
-    If Not IsRunning Then
-        InitializeRegisters
-        ProgramCounter = 0
-        IsRunning = True
-    End If
+Sub CreateSampleVMProgram()
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets.Add
+    ws.Name = "CodigoVM"
     
-    CreateExecutionTrace
-    Dim stepCount As Long
-    stepCount = 0
-    Dim maxSteps As Long
-    maxSteps = 1000
+    ws.Range("A1").value = "Programa Ensamblador (una instrucción por línea)"
+    ws.Range("A1").Font.Bold = True
+    ws.Range("A1").Font.size = 12
     
-    While IsRunning And ProgramCounter < MemorySize And stepCount < maxSteps
-        stepCount = stepCount + 1
-        If Not ExecuteNextStep(stepCount) Then
-            Exit While
-        End If
-        DoEvents
-    Wend
+    Dim row As Integer: row = 2
+    ws.Cells(row, 1).value = "; Programa de ejemplo - Operaciones básicas": row = row + 1
+    ws.Cells(row, 1).value = "MOV AX 10": row = row + 1
+    ws.Cells(row, 1).value = "MOV BX 5": row = row + 1
+    ws.Cells(row, 1).value = "ADD AX BX": row = row + 1
+    ws.Cells(row, 1).value = "MOV CX 3": row = row + 1
+    ws.Cells(row, 1).value = "MUL CX": row = row + 1
+    ws.Cells(row, 1).value = "PUSH AX": row = row + 1
+    ws.Cells(row, 1).value = "MOV DX 2": row = row + 1
+    ws.Cells(row, 1).value = "POP BX": row = row + 1
+    ws.Cells(row, 1).value = "SUB BX DX": row = row + 1
+    ws.Cells(row, 1).value = "HLT": row = row + 1
     
-    If stepCount >= maxSteps Then
-        AddToExecutionTrace "EJECUCIÓN DETENIDA: Límite de pasos excedido", stepCount + 2
-    Else
-        AddToExecutionTrace "EJECUCIÓN COMPLETADA", stepCount + 2
-    End If
-    
-    IsRunning = False
-    UpdateRegisterDisplay
+    ws.Columns("A").ColumnWidth = 50
 End Sub
 
-Function ExecuteNextStep(stepNumber As Long) As Boolean
-    If ProgramCounter >= MemorySize Or VirtualMemory(ProgramCounter).instruction = "" Then
-        IsRunning = False
-        ExecuteNextStep = False
-        Exit Function
+' ===================================================================================
+' EJECUCIÓN
+' ===================================================================================
+
+Sub ExecuteNextInstructionVM()
+    ' VALIDACIÓN CRÍTICA: Verificar límites antes de acceder al array
+    If CurrentInstructionVM < 0 Or CurrentInstructionVM >= VM_SIZE Then
+        UpdateVMStatus "ERROR", "---", "Puntero fuera de límites"
+        MsgBox "Error: El puntero de instrucción está fuera del rango válido.", vbCritical
+        Exit Sub
+    End If
+    
+    Application.ScreenUpdating = False
+    
+    ' Verificar si hay instrucción válida
+    If VirtualMemory(CurrentInstructionVM).instruction = "" Or _
+       VirtualMemory(CurrentInstructionVM).dataType <> "INSTR" Then
+        UpdateVMStatus "COMPLETADO", "---", "No hay más instrucciones"
+        Application.ScreenUpdating = True
+        Exit Sub
     End If
     
     Dim instruction As String
-    instruction = VirtualMemory(ProgramCounter).instruction
+    instruction = VirtualMemory(CurrentInstructionVM).instruction
+    VirtualMemory(CurrentInstructionVM).Accessed = True
     
-    ' Mostrar en traza de ejecución
-    AddToExecutionTrace "PC=" & ProgramCounter & ": " & instruction, stepNumber + 1
+    UpdateVMStatus "EJECUTANDO", "0x" & Format(Hex(CurrentInstructionVM), "00"), instruction
     
-    ' Parsear y ejecutar
-    If ParseAndExecuteInstruction(instruction) Then
-        ExecuteNextStep = True
+    If ParseAndExecuteVM(instruction) Then
+        UpdateVMDisplay
+        HighlightCurrentInstructionVM
+        UpdateRegisterDisplayVM
     Else
-        AddToExecutionTrace "ERROR en instrucción", stepNumber + 1
-        IsRunning = False
-        ExecuteNextStep = False
+        UpdateVMStatus "ERROR", "0x" & Format(Hex(CurrentInstructionVM), "00"), "Error: " & instruction
     End If
-End Function
+    
+    Application.ScreenUpdating = True
+End Sub
 
-Function ParseAndExecuteInstruction(instruction As String) As Boolean
+Sub ExecuteFullProgramVM()
+    Application.ScreenUpdating = False
+    IsRunning = True
+    Dim stepCount As Integer: stepCount = 0
+    Dim maxSteps As Integer: maxSteps = 50
+    
+    Do While IsRunning And stepCount < maxSteps
+        ' Verificar límites del puntero de instrucción
+        If CurrentInstructionVM < 0 Or CurrentInstructionVM >= VM_SIZE Then
+            UpdateVMStatus "ERROR", "0x" & Hex(CurrentInstructionVM), "Puntero fuera de límites"
+            IsRunning = False
+            Exit Do
+        End If
+        
+        ' Verificar si hay instrucción válida
+       On Error Resume Next
+If VirtualMemory(CurrentInstructionVM).instruction = "" Or _
+   VirtualMemory(CurrentInstructionVM).dataType <> "INSTR" Then
+    IsRunning = False
+    Exit Do
+End If
+If Err.Number <> 0 Then
+    UpdateVMStatus "ERROR", "0x" & Hex(CurrentInstructionVM), "Error acceso memoria"
+    IsRunning = False
+    Exit Do
+End If
+On Error GoTo 0
+        
+        ' Ejecutar la instrucción
+        ExecuteNextInstructionVM
+        stepCount = stepCount + 1
+        DoEvents
+    Loop
+    
+    IsRunning = False
+    Application.ScreenUpdating = True
+    
+    If stepCount >= maxSteps Then
+        MsgBox "Ejecución detenida. Límite de " & maxSteps & " pasos alcanzado.", vbExclamation
+    Else
+        UpdateVMStatus "COMPLETADO", "---", "Ejecución finalizada"
+        MsgBox "Ejecución completada. Pasos ejecutados: " & stepCount, vbInformation
+    End If
+End Sub
+
+Function ParseAndExecuteVM(instruction As String) As Boolean
     On Error GoTo ErrorHandler
     
-    ' Limpiar instrucción
-    Dim cleanInstruction As String
-    cleanInstruction = Split(instruction, ";")(0)
+    If InStr(instruction, ";") > 0 Then
+        instruction = Trim(Left(instruction, InStr(instruction, ";") - 1))
+    End If
     
-    Dim parts() As String
-    parts = Split(Trim(cleanInstruction), " ")
-    
-    If UBound(parts) < 0 Then
-        ProgramCounter = ProgramCounter + 1
-        ParseAndExecuteInstruction = True
+    If Trim(instruction) = "" Then
+        CurrentInstructionVM = CurrentInstructionVM + 1
+        ParseAndExecuteVM = True
         Exit Function
     End If
     
-    Dim opcode As String
-    opcode = UCase(Trim(parts(0)))
+    Dim parts() As String
+    parts = Split(Trim(instruction), " ")
     
-    Dim operand1 As String, operand2 As String
-    operand1 = ""
-    operand2 = ""
+    If UBound(parts) < 0 Then
+        CurrentInstructionVM = CurrentInstructionVM + 1
+        ParseAndExecuteVM = True
+        Exit Function
+    End If
     
-    If UBound(parts) >= 1 Then operand1 = Trim(parts(1))
-    If UBound(parts) >= 2 Then operand2 = Trim(parts(2))
+    Dim opcode As String: opcode = UCase(Trim(parts(0)))
+    Dim op1 As String: op1 = ""
+    Dim op2 As String: op2 = ""
     
-    ' Ejecutar instrucción
+    If UBound(parts) >= 1 Then op1 = Trim(parts(1))
+    If UBound(parts) >= 2 Then op2 = Trim(parts(2))
+    
     Select Case opcode
-        Case "MOV"
-            ParseAndExecuteInstruction = ExecuteMOV(operand1, operand2)
-        Case "ADD"
-            ParseAndExecuteInstruction = ExecuteADD(operand1, operand2)
-        Case "SUB"
-            ParseAndExecuteInstruction = ExecuteSUB(operand1, operand2)
-        Case "MUL"
-            ParseAndExecuteInstruction = ExecuteMUL(operand1)
-        Case "DIV"
-            ParseAndExecuteInstruction = ExecuteDIV(operand1)
-        Case "INC"
-            ParseAndExecuteInstruction = ExecuteINC(operand1)
-        Case "DEC"
-            ParseAndExecuteInstruction = ExecuteDEC(operand1)
-        Case "JMP"
-            ParseAndExecuteInstruction = ExecuteJMP(operand1)
-        Case "JZ", "JE"
-            ParseAndExecuteInstruction = ExecuteJZ(operand1)
-        Case "JNZ", "JNE"
-            ParseAndExecuteInstruction = ExecuteJNZ(operand1)
-        Case "CALL"
-            ParseAndExecuteInstruction = ExecuteCALL(operand1)
-        Case "RET"
-            ParseAndExecuteInstruction = ExecuteRET()
-        Case "PUSH"
-            ParseAndExecuteInstruction = ExecutePUSH(operand1)
-        Case "POP"
-            ParseAndExecuteInstruction = ExecutePOP(operand1)
-        Case "CMP"
-            ParseAndExecuteInstruction = ExecuteCMP(operand1, operand2)
-        Case "HLT"
-            IsRunning = False
-            ParseAndExecuteInstruction = True
-        Case "NOP"
-            ProgramCounter = ProgramCounter + 1
-            ParseAndExecuteInstruction = True
-        Case Else
-            MsgBox "Instrucción no reconocida: " & opcode, vbExclamation
-            ParseAndExecuteInstruction = False
+        Case "MOV": ParseAndExecuteVM = ExecuteMOV_VM(op1, op2)
+        Case "ADD": ParseAndExecuteVM = ExecuteADD_VM(op1, op2)
+        Case "SUB": ParseAndExecuteVM = ExecuteSUB_VM(op1, op2)
+        Case "MUL": ParseAndExecuteVM = ExecuteMUL_VM(op1)
+        Case "DIV": ParseAndExecuteVM = ExecuteDIV_VM(op1)
+        Case "INC": ParseAndExecuteVM = ExecuteINC_VM(op1)
+        Case "DEC": ParseAndExecuteVM = ExecuteDEC_VM(op1)
+        Case "PUSH": ParseAndExecuteVM = ExecutePUSH_VM(op1)
+        Case "POP": ParseAndExecuteVM = ExecutePOP_VM(op1)
+        Case "CMP": ParseAndExecuteVM = ExecuteCMP_VM(op1, op2)
+        Case "JMP": ParseAndExecuteVM = ExecuteJMP_VM(op1)
+        Case "JZ", "JE": ParseAndExecuteVM = ExecuteJZ_VM(op1)
+        Case "JNZ", "JNE": ParseAndExecuteVM = ExecuteJNZ_VM(op1)
+        Case "HLT": IsRunning = False: ParseAndExecuteVM = True
+        Case "NOP": CurrentInstructionVM = CurrentInstructionVM + 1: ParseAndExecuteVM = True
+        Case Else: ParseAndExecuteVM = False
     End Select
-    
     Exit Function
-    
 ErrorHandler:
-    MsgBox "Error ejecutando: " & instruction, vbCritical
-    ParseAndExecuteInstruction = False
+    ParseAndExecuteVM = False
 End Function
 
-' =============================================
-' IMPLEMENTACIÓN DE INSTRUCCIONES
-' =============================================
+' ===================================================================================
+' INSTRUCCIONES
+' ===================================================================================
 
-Function ExecuteMOV(dest As String, src As String) As Boolean
-    Dim value As Long
-    value = GetOperandValue(src)
-    
-    If SetRegisterValue(dest, value) Then
-        ProgramCounter = ProgramCounter + 1
-        ExecuteMOV = True
+Function ExecuteMOV_VM(dest As String, src As String) As Boolean
+    If SetRegisterValueVM(dest, GetOperandValueVM(src)) Then
+        CurrentInstructionVM = CurrentInstructionVM + 1
+        ExecuteMOV_VM = True
     Else
-        ExecuteMOV = False
-    End If
-    UpdateRegisterDisplay
-End Function
-
-Function ExecuteADD(dest As String, src As String) As Boolean
-    Dim regValue As Long, srcValue As Long
-    regValue = GetRegisterValue(dest)
-    srcValue = GetOperandValue(src)
-    
-    If SetRegisterValue(dest, regValue + srcValue) Then
-        UpdateFlags (regValue + srcValue)
-        ProgramCounter = ProgramCounter + 1
-        ExecuteADD = True
-    Else
-        ExecuteADD = False
-    End If
-    UpdateRegisterDisplay
-End Function
-
-Function ExecuteSUB(dest As String, src As String) As Boolean
-    Dim regValue As Long, srcValue As Long
-    regValue = GetRegisterValue(dest)
-    srcValue = GetOperandValue(src)
-    
-    If SetRegisterValue(dest, regValue - srcValue) Then
-        UpdateFlags (regValue - srcValue)
-        ProgramCounter = ProgramCounter + 1
-        ExecuteSUB = True
-    Else
-        ExecuteSUB = False
-    End If
-    UpdateRegisterDisplay
-End Function
-
-Function ExecuteJMP(address As String) As Boolean
-    Dim jumpAddr As Long
-    jumpAddr = Val(address)
-    
-    If jumpAddr >= 0 And jumpAddr < MemorySize Then
-        ProgramCounter = jumpAddr
-        ExecuteJMP = True
-    Else
-        ExecuteJMP = False
+        ExecuteMOV_VM = False
     End If
 End Function
 
-Function ExecutePUSH(value As String) As Boolean
-    Dim pushValue As Long
-    pushValue = GetOperandValue(value)
-    
-    If StackPointer > 0 Then
-        StackPointer = StackPointer - 1
-        WriteMemory StackPointer, CStr(pushValue), "STACK"
-        SP = StackPointer
-        ProgramCounter = ProgramCounter + 1
-        ExecutePUSH = True
+Function ExecuteADD_VM(dest As String, src As String) As Boolean
+    Dim result As Long
+    result = GetRegisterValueVM(dest) + GetOperandValueVM(src)
+    If SetRegisterValueVM(dest, result) Then
+        UpdateFlagsVM result
+        CurrentInstructionVM = CurrentInstructionVM + 1
+        ExecuteADD_VM = True
     Else
-        ExecutePUSH = False
+        ExecuteADD_VM = False
     End If
-    UpdateRegisterDisplay
 End Function
 
-Function ExecutePOP(dest As String) As Boolean
-    If StackPointer < MemorySize - 1 Then
-        Dim popValue As String
-        popValue = ReadMemory(StackPointer)
-        StackPointer = StackPointer + 1
-        SP = StackPointer
-        
-        If SetRegisterValue(dest, Val(popValue)) Then
-            ProgramCounter = ProgramCounter + 1
-            ExecutePOP = True
+Function ExecuteSUB_VM(dest As String, src As String) As Boolean
+    Dim result As Long
+    result = GetRegisterValueVM(dest) - GetOperandValueVM(src)
+    If SetRegisterValueVM(dest, result) Then
+        UpdateFlagsVM result
+        CurrentInstructionVM = CurrentInstructionVM + 1
+        ExecuteSUB_VM = True
+    Else
+        ExecuteSUB_VM = False
+    End If
+End Function
+
+Function ExecuteMUL_VM(operand As String) As Boolean
+    AX = AX * GetOperandValueVM(operand)
+    UpdateFlagsVM AX
+    CurrentInstructionVM = CurrentInstructionVM + 1
+    ExecuteMUL_VM = True
+End Function
+
+Function ExecuteDIV_VM(operand As String) As Boolean
+    Dim divisor As Long: divisor = GetOperandValueVM(operand)
+    If divisor = 0 Then
+        MsgBox "Error: División por cero", vbCritical
+        ExecuteDIV_VM = False
+    Else
+        AX = AX \ divisor
+        UpdateFlagsVM AX
+        CurrentInstructionVM = CurrentInstructionVM + 1
+        ExecuteDIV_VM = True
+    End If
+End Function
+
+Function ExecuteINC_VM(operand As String) As Boolean
+    Dim result As Long: result = GetRegisterValueVM(operand) + 1
+    If SetRegisterValueVM(operand, result) Then
+        UpdateFlagsVM result
+        CurrentInstructionVM = CurrentInstructionVM + 1
+        ExecuteINC_VM = True
+    Else
+        ExecuteINC_VM = False
+    End If
+End Function
+
+Function ExecuteDEC_VM(operand As String) As Boolean
+    Dim result As Long: result = GetRegisterValueVM(operand) - 1
+    If SetRegisterValueVM(operand, result) Then
+        UpdateFlagsVM result
+        CurrentInstructionVM = CurrentInstructionVM + 1
+        ExecuteDEC_VM = True
+    Else
+        ExecuteDEC_VM = False
+    End If
+End Function
+
+Function ExecutePUSH_VM(operand As String) As Boolean
+    If StackPointerVM > 0 Then
+        StackPointerVM = StackPointerVM - 1
+        WriteVMMemory StackPointerVM, CStr(GetOperandValueVM(operand)), "STACK"
+        SP = StackPointerVM
+        CurrentInstructionVM = CurrentInstructionVM + 1
+        ExecutePUSH_VM = True
+    Else
+        ExecutePUSH_VM = False
+    End If
+End Function
+
+Function ExecutePOP_VM(dest As String) As Boolean
+    If StackPointerVM < VM_SIZE - 1 Then
+        Dim value As String: value = ReadVMMemory(StackPointerVM)
+        StackPointerVM = StackPointerVM + 1
+        SP = StackPointerVM
+        If SetRegisterValueVM(dest, Val(value)) Then
+            CurrentInstructionVM = CurrentInstructionVM + 1
+            ExecutePOP_VM = True
         Else
-            ExecutePOP = False
+            ExecutePOP_VM = False
         End If
     Else
-        ExecutePOP = False
+        ExecutePOP_VM = False
     End If
-    UpdateRegisterDisplay
 End Function
 
-Function ExecuteCALL(address As String) As Boolean
-    Dim callAddr As Long
-    callAddr = Val(address)
-    
-    If StackPointer > 0 And callAddr >= 0 And callAddr < MemorySize Then
-        ' Guardar dirección de retorno
-        StackPointer = StackPointer - 1
-        WriteMemory StackPointer, CStr(ProgramCounter + 1), "STACK"
-        SP = StackPointer
-        
-        ' Saltar a la dirección
-        ProgramCounter = callAddr
-        ExecuteCALL = True
+Function ExecuteCMP_VM(op1 As String, op2 As String) As Boolean
+    UpdateFlagsVM (GetOperandValueVM(op1) - GetOperandValueVM(op2))
+    CurrentInstructionVM = CurrentInstructionVM + 1
+    ExecuteCMP_VM = True
+End Function
+
+Function ExecuteJMP_VM(address As String) As Boolean
+    Dim addr As Integer: addr = Val(address)
+    If addr >= 0 And addr < VM_SIZE Then
+        CurrentInstructionVM = addr
+        ExecuteJMP_VM = True
     Else
-        ExecuteCALL = False
+        ExecuteJMP_VM = False
     End If
-    UpdateRegisterDisplay
 End Function
 
-Function ExecuteRET() As Boolean
-    If StackPointer < MemorySize - 1 Then
-        Dim returnAddr As String
-        returnAddr = ReadMemory(StackPointer)
-        StackPointer = StackPointer + 1
-        SP = StackPointer
-        
-        ProgramCounter = Val(returnAddr)
-        ExecuteRET = True
+Function ExecuteJZ_VM(address As String) As Boolean
+    If (Flags And 1) = 1 Then
+        ExecuteJZ_VM = ExecuteJMP_VM(address)
     Else
-        ExecuteRET = False
+        CurrentInstructionVM = CurrentInstructionVM + 1
+        ExecuteJZ_VM = True
     End If
-    UpdateRegisterDisplay
 End Function
 
-' =============================================
-' FUNCIONES AUXILIARES
-' =============================================
+Function ExecuteJNZ_VM(address As String) As Boolean
+    If (Flags And 1) = 0 Then
+        ExecuteJNZ_VM = ExecuteJMP_VM(address)
+    Else
+        CurrentInstructionVM = CurrentInstructionVM + 1
+        ExecuteJNZ_VM = True
+    End If
+End Function
 
-Function GetRegisterValue(regName As String) As Long
+' ===================================================================================
+' AUXILIARES
+' ===================================================================================
+
+Function GetRegisterValueVM(regName As String) As Long
     Select Case UCase(regName)
-        Case "AX": GetRegisterValue = AX
-        Case "BX": GetRegisterValue = BX
-        Case "CX": GetRegisterValue = CX
-        Case "DX": GetRegisterValue = DX
-        Case "SI": GetRegisterValue = SI
-        Case "DI": GetRegisterValue = DI
-        Case "BP": GetRegisterValue = BP
-        Case "SP": GetRegisterValue = SP
-        Case Else: GetRegisterValue = 0
+        Case "AX": GetRegisterValueVM = AX
+        Case "BX": GetRegisterValueVM = BX
+        Case "CX": GetRegisterValueVM = CX
+        Case "DX": GetRegisterValueVM = DX
+        Case "SI": GetRegisterValueVM = SI
+        Case "DI": GetRegisterValueVM = DI
+        Case "BP": GetRegisterValueVM = BP
+        Case "SP": GetRegisterValueVM = SP
+        Case Else: GetRegisterValueVM = 0
     End Select
 End Function
 
-Function SetRegisterValue(regName As String, value As Long) As Boolean
+Function SetRegisterValueVM(regName As String, value As Long) As Boolean
     Select Case UCase(regName)
         Case "AX": AX = value
         Case "BX": BX = value
@@ -433,236 +488,195 @@ Function SetRegisterValue(regName As String, value As Long) As Boolean
         Case "SI": SI = value
         Case "DI": DI = value
         Case "BP": BP = value
-        Case "SP": SP = value
-        Case Else: SetRegisterValue = False: Exit Function
+        Case "SP": SP = value: StackPointerVM = value
+        Case Else: SetRegisterValueVM = False: Exit Function
     End Select
-    SetRegisterValue = True
+    SetRegisterValueVM = True
 End Function
 
-Function GetOperandValue(operand As String) As Long
+Function GetOperandValueVM(operand As String) As Long
     If Left(operand, 1) = "[" And Right(operand, 1) = "]" Then
-        ' Es una referencia a memoria
-        Dim memAddr As Long
-        memAddr = Val(Mid(operand, 2, Len(operand) - 2))
-        GetOperandValue = Val(ReadMemory(memAddr))
+        GetOperandValueVM = Val(ReadVMMemory(Val(Mid(operand, 2, Len(operand) - 2))))
+        Exit Function
+    End If
+    Dim regVal As Long: regVal = GetRegisterValueVM(operand)
+    If regVal = 0 And IsNumeric(operand) Then
+        GetOperandValueVM = Val(operand)
     Else
-        ' Es un valor inmediato o registro
-        GetOperandValue = Val(operand)
+        GetOperandValueVM = regVal
     End If
 End Function
 
-Sub UpdateFlags(value As Long)
-    ' Bandera Zero
-    If value = 0 Then
-        Flags = Flags Or 1
-    Else
-        Flags = Flags And Not 1
-    End If
-    
-    ' Bandera Sign (negativo)
-    If value < 0 Then
-        Flags = Flags Or 2
-    Else
-        Flags = Flags And Not 2
-    End If
+Sub UpdateFlagsVM(value As Long)
+    If value = 0 Then Flags = Flags Or 1 Else Flags = Flags And Not 1
+    If value < 0 Then Flags = Flags Or 2 Else Flags = Flags And Not 2
 End Sub
 
-Sub InitializeRegisters()
-    AX = 0: BX = 0: CX = 0: DX = 0
-    SI = 0: DI = 0: BP = 0: SP = MemorySize - 1
-    Flags = 0
-    StackPointer = MemorySize - 1
-    UpdateRegisterDisplay
-End Sub
+' ===================================================================================
+' INTERFAZ
+' ===================================================================================
 
-' =============================================
-' INTERFAZ VISUAL
-' =============================================
-
-Sub CreateMemoryDisplay()
+Sub CreateVMInterface()
     Dim ws As Worksheet
     On Error Resume Next
-    Set ws = ThisWorkbook.Sheets("MemoriaVirtual")
+    Set ws = Worksheets("MemoriaVirtual")
     If ws Is Nothing Then
-        Set ws = ThisWorkbook.Sheets.Add
+        Set ws = Worksheets.Add
         ws.Name = "MemoriaVirtual"
     End If
     On Error GoTo 0
     
     ws.Cells.Clear
-    ws.Cells(1, 1).value = "DIRECCIÓN"
-    ws.Cells(1, 2).value = "VALOR"
-    ws.Cells(1, 3).value = "INSTRUCCIÓN"
-    ws.Cells(1, 4).value = "TIPO"
-    ws.Cells(1, 5).value = "ACCEDIDO"
-    ws.Cells(1, 6).value = "MODIFICADO"
     
-    UpdateMemoryDisplay
+    With ws
+        .Range("B1").value = "SIMULADOR DE MEMORIA VIRTUAL"
+        .Range("B1:J1").Merge
+        .Range("B1").Font.Bold = True
+        .Range("B1").Font.size = 14
+        
+        .Cells(3, 1).value = "Dir"
+        Dim i As Integer, j As Integer
+        For i = 0 To VM_COLS - 1
+            .Cells(3, i + 2).value = Hex(i)
+        Next i
+        
+        .Range("A3").Resize(1, VM_COLS + 1).Font.Bold = True
+        .Range("A3").Resize(1, VM_COLS + 1).Interior.color = RGB(200, 200, 200)
+        .Range("A3").Resize(1, VM_COLS + 1).HorizontalAlignment = xlCenter
+        
+        For i = 0 To VM_ROWS - 1
+            .Cells(4 + i, 1).value = "0x" & Format(Hex(i * VM_COLS), "00")
+            .Cells(4 + i, 1).Font.Bold = True
+            .Cells(4 + i, 1).Interior.color = RGB(200, 200, 200)
+            
+            For j = 0 To VM_COLS - 1
+                With .Cells(4 + i, j + 2)
+                    .value = "00"
+                    .HorizontalAlignment = xlCenter
+                    .Borders.LineStyle = xlContinuous
+                    .Interior.color = RGB(240, 240, 240)
+                    .Font.Name = "Courier New"
+                    .Font.size = 9
+                End With
+            Next j
+        Next i
+        
+        .Columns("A").ColumnWidth = 6
+        .Columns("B:Q").ColumnWidth = 4.5
+        
+        .Range("S3").value = "REGISTROS"
+        .Range("S3:U3").Merge
+        .Range("S3").Font.Bold = True
+        .Range("S3").HorizontalAlignment = xlCenter
+        .Range("S3").Interior.color = RGB(200, 200, 200)
+        
+        .Range("S4").value = "Reg"
+        .Range("T4").value = "Dec"
+        .Range("U4").value = "Hex"
+        .Range("S4:U4").Font.Bold = True
+        
+        .Range("S13").value = "ESTADO"
+        .Range("S13:U13").Merge
+        .Range("S13").Font.Bold = True
+        .Range("S13").HorizontalAlignment = xlCenter
+        .Range("S13").Interior.color = RGB(200, 200, 200)
+        
+        .Range("S14").value = "Estado:"
+        .Range("S15").value = "Dir:"
+        .Range("S16").value = "Instr:"
+        
+        ' Mostrar registros iniciales
+        UpdateRegisterDisplayVM
+    End With
+    
+    CreateVMControlButtons
 End Sub
 
-Sub UpdateMemoryDisplay()
+Sub UpdateVMDisplay()
     Dim ws As Worksheet
-    Set ws = ThisWorkbook.Sheets("MemoriaVirtual")
+    Set ws = Worksheets("MemoriaVirtual")
     
-    Dim row As Long
-    row = 2
-    Dim i As Long
+    Dim displayData() As Variant
+    ReDim displayData(1 To VM_ROWS, 1 To VM_COLS)
     
-    For i = 0 To MemorySize - 1
-        If VirtualMemory(i).dataType <> "FREE" Or VirtualMemory(i).Accessed Then
-            ws.Cells(row, 1).value = VirtualMemory(i).address
-            ws.Cells(row, 2).value = VirtualMemory(i).value
-            ws.Cells(row, 3).value = VirtualMemory(i).instruction
-            ws.Cells(row, 4).value = VirtualMemory(i).dataType
-            ws.Cells(row, 5).value = IIf(VirtualMemory(i).Accessed, "?", "")
-            ws.Cells(row, 6).value = IIf(VirtualMemory(i).Modified, "?", "")
-            row = row + 1
-        End If
+    Dim i As Integer, j As Integer, addr As Integer
+    For i = 0 To VM_ROWS - 1
+        For j = 0 To VM_COLS - 1
+            addr = i * VM_COLS + j
+            displayData(i + 1, j + 1) = VirtualMemory(addr).value
+        Next j
     Next i
     
-    ws.Columns.AutoFit
+    ws.Range("B4").Resize(VM_ROWS, VM_COLS).value = displayData
+    
+    For i = 0 To VM_ROWS - 1
+        For j = 0 To VM_COLS - 1
+            addr = i * VM_COLS + j
+            With ws.Cells(4 + i, j + 2)
+                Select Case VirtualMemory(addr).dataType
+                    Case "INSTR": .Interior.color = RGB(200, 255, 200)
+                    Case "DATA": .Interior.color = RGB(200, 220, 255)
+                    Case "STACK": .Interior.color = RGB(255, 240, 200)
+                    Case Else: .Interior.color = RGB(240, 240, 240)
+                End Select
+                If VirtualMemory(addr).Accessed Then .Font.Bold = True
+            End With
+        Next j
+    Next i
 End Sub
 
-Sub UpdateRegisterDisplay()
+Sub HighlightCurrentInstructionVM()
     Dim ws As Worksheet
-    On Error Resume Next
-    Set ws = ThisWorkbook.Sheets("Registros")
-    If ws Is Nothing Then
-        Set ws = ThisWorkbook.Sheets.Add
-        ws.Name = "Registros"
-    End If
-    On Error GoTo 0
-    
-    ws.Cells.Clear
-    ws.Cells(1, 1).value = "REGISTRO"
-    ws.Cells(1, 2).value = "VALOR"
-    ws.Cells(1, 3).value = "HEX"
-    
-    ws.Cells(2, 1).value = "AX": ws.Cells(2, 2).value = AX: ws.Cells(2, 3).value = "0x" & Hex(AX)
-    ws.Cells(3, 1).value = "BX": ws.Cells(3, 2).value = BX: ws.Cells(3, 3).value = "0x" & Hex(BX)
-    ws.Cells(4, 1).value = "CX": ws.Cells(4, 2).value = CX: ws.Cells(4, 3).value = "0x" & Hex(CX)
-    ws.Cells(5, 1).value = "DX": ws.Cells(5, 2).value = DX: ws.Cells(5, 3).value = "0x" & Hex(DX)
-    ws.Cells(6, 1).value = "SI": ws.Cells(6, 2).value = SI: ws.Cells(6, 3).value = "0x" & Hex(SI)
-    ws.Cells(7, 1).value = "DI": ws.Cells(7, 2).value = DI: ws.Cells(7, 3).value = "0x" & Hex(DI)
-    ws.Cells(8, 1).value = "BP": ws.Cells(8, 2).value = BP: ws.Cells(8, 3).value = "0x" & Hex(BP)
-    ws.Cells(9, 1).value = "SP": ws.Cells(9, 2).value = SP: ws.Cells(9, 3).value = "0x" & Hex(SP)
-    
-    ws.Cells(11, 1).value = "Program Counter"
-    ws.Cells(11, 2).value = ProgramCounter
-    ws.Cells(12, 1).value = "Stack Pointer"
-    ws.Cells(12, 2).value = StackPointer
-    ws.Cells(13, 1).value = "Flags"
-    ws.Cells(13, 2).value = Flags
-    ws.Cells(13, 3).value = "0x" & Hex(Flags)
-    
-    ws.Columns.AutoFit
+    Set ws = Worksheets("MemoriaVirtual")
+    Dim addr As Integer: addr = CurrentInstructionVM
+    Dim row As Integer: row = 4 + (addr \ VM_COLS)
+    Dim col As Integer: col = 2 + (addr Mod VM_COLS)
+    ws.Cells(row, col).Interior.color = RGB(255, 255, 0)
 End Sub
 
-Sub CreateExecutionTrace()
+Sub UpdateRegisterDisplayVM()
     Dim ws As Worksheet
-    On Error Resume Next
-    Set ws = ThisWorkbook.Sheets("TrazaEjecucion")
-    If ws Is Nothing Then
-        Set ws = ThisWorkbook.Sheets.Add
-        ws.Name = "TrazaEjecucion"
-    End If
-    On Error GoTo 0
-    
-    ws.Cells.Clear
-    ws.Cells(1, 1).value = "PASO"
-    ws.Cells(1, 2).value = "INSTRUCCIÓN"
-    ws.Cells(1, 3).value = "AX"
-    ws.Cells(1, 4).value = "BX"
-    ws.Cells(1, 5).value = "CX"
-    ws.Cells(1, 6).value = "DX"
-    ws.Cells(1, 7).value = "ESTADO"
+    Set ws = Worksheets("MemoriaVirtual")
+    ws.Cells(5, 19).value = "AX": ws.Cells(5, 20).value = AX: ws.Cells(5, 21).value = "0x" & Hex(AX)
+    ws.Cells(6, 19).value = "BX": ws.Cells(6, 20).value = BX: ws.Cells(6, 21).value = "0x" & Hex(BX)
+    ws.Cells(7, 19).value = "CX": ws.Cells(7, 20).value = CX: ws.Cells(7, 21).value = "0x" & Hex(CX)
+    ws.Cells(8, 19).value = "DX": ws.Cells(8, 20).value = DX: ws.Cells(8, 21).value = "0x" & Hex(DX)
+    ws.Cells(9, 19).value = "SI": ws.Cells(9, 20).value = SI: ws.Cells(9, 21).value = "0x" & Hex(SI)
+    ws.Cells(10, 19).value = "DI": ws.Cells(10, 20).value = DI: ws.Cells(10, 21).value = "0x" & Hex(DI)
+    ws.Cells(11, 19).value = "SP": ws.Cells(11, 20).value = SP: ws.Cells(11, 21).value = "0x" & Hex(SP)
+    ws.Cells(12, 19).value = "FL": ws.Cells(12, 20).value = Flags: ws.Cells(12, 21).value = "0x" & Hex(Flags)
 End Sub
 
-Sub AddToExecutionTrace(instruction As String, stepNumber As Long)
+Sub UpdateVMStatus(status As String, address As String, details As String)
     Dim ws As Worksheet
-    Set ws = ThisWorkbook.Sheets("TrazaEjecucion")
+    Set ws = Worksheets("MemoriaVirtual")
+    ws.Range("T14").value = status
+    ws.Range("T15").value = address
+    ws.Range("T16").value = Left(details, 30)
+    Select Case status
+        Case "EJECUTANDO": ws.Range("T14").Interior.color = RGB(255, 255, 0)
+        Case "COMPLETADO": ws.Range("T14").Interior.color = RGB(0, 255, 0)
+        Case "ERROR": ws.Range("T14").Interior.color = RGB(255, 0, 0)
+        Case Else: ws.Range("T14").Interior.color = RGB(255, 255, 255)
+    End Select
+End Sub
+
+Sub CreateVMControlButtons()
+    Dim btn As Button, ws As Worksheet
+    Set ws = Worksheets("MemoriaVirtual")
+    On Error Resume Next: ws.Buttons.Delete: On Error GoTo 0
     
-    ws.Cells(stepNumber, 1).value = stepNumber - 1
-    ws.Cells(stepNumber, 2).value = instruction
-    ws.Cells(stepNumber, 3).value = AX
-    ws.Cells(stepNumber, 4).value = BX
-    ws.Cells(stepNumber, 5).value = CX
-    ws.Cells(stepNumber, 6).value = DX
-    ws.Cells(stepNumber, 7).value = "OK"
+    Set btn = ws.Buttons.Add(50, 350, 100, 25)
+    btn.OnAction = "ExecuteNextInstructionVM"
+    btn.Characters.Text = "Siguiente"
     
-    ws.Columns.AutoFit
-End Sub
-
-' =============================================
-' FUNCIONES DE CONTROL PRINCIPALES
-' =============================================
-
-Sub IniciarSimulador()
-    InitializeVirtualMemory 256
-    LoadProgramFromCodeSheet
-    MsgBox "Simulador listo. Use 'EjecutarPrograma' para comenzar.", vbInformation
-End Sub
-
-Sub EjecutarPrograma()
-    ExecuteFullProgram
-End Sub
-
-Sub PasoAPaso()
-    If Not IsRunning Then
-        InitializeRegisters
-        ProgramCounter = 0
-        IsRunning = True
-        CreateExecutionTrace
-    End If
+    Set btn = ws.Buttons.Add(160, 350, 100, 25)
+    btn.OnAction = "ExecuteFullProgramVM"
+    btn.Characters.Text = "Ejecutar Todo"
     
-    If ExecuteNextStep(GetLastExecutionStep() + 1) Then
-        UpdateRegisterDisplay
-    Else
-        IsRunning = False
-        MsgBox "Ejecución terminada", vbInformation
-    End If
+    Set btn = ws.Buttons.Add(270, 350, 80, 25)
+    btn.OnAction = "ResetVirtualMemory"
+    btn.Characters.Text = "Reiniciar"
 End Sub
 
-Function GetLastExecutionStep() As Long
-    Dim ws As Worksheet
-    Set ws = ThisWorkbook.Sheets("TrazaEjecucion")
-    GetLastExecutionStep = ws.Cells(ws.ROWS.count, 1).End(xlUp).row - 1
-End Function
 
-' Instrucciones adicionales (simplificadas)
-Function ExecuteMUL(operand As String) As Boolean
-    Dim value As Long
-    value = GetOperandValue(operand)
-    AX = AX * value
-    UpdateFlags (AX)
-    ProgramCounter = ProgramCounter + 1
-    ExecuteMUL = True
-End Function
-
-Function ExecuteINC(operand As String) As Boolean
-    If SetRegisterValue(operand, GetRegisterValue(operand) + 1) Then
-        UpdateFlags (GetRegisterValue(operand))
-        ProgramCounter = ProgramCounter + 1
-        ExecuteINC = True
-    Else
-        ExecuteINC = False
-    End If
-End Function
-
-Function ExecuteJZ(operand As String) As Boolean
-    If (Flags And 1) = 1 Then ' Zero flag set
-        ExecuteJMP operand
-    Else
-        ProgramCounter = ProgramCounter + 1
-        ExecuteJZ = True
-    End If
-End Function
-
-Function ExecuteCMP(op1 As String, op2 As String) As Boolean
-    Dim val1 As Long, val2 As Long
-    val1 = GetOperandValue(op1)
-    val2 = GetOperandValue(op2)
-    UpdateFlags (val1 - val2)
-    ProgramCounter = ProgramCounter + 1
-    ExecuteCMP = True
-End Function

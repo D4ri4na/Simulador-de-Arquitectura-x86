@@ -476,7 +476,23 @@ Sub ParseInstructionLine(line As String, index As Integer)
     Dim mainParts() As String, parts() As String, commentPart As String
     
     ' Separar comentarios
-    commentPart = Split(line, ";")(0)
+    If InStr(line, ";") > 0 Then
+        commentPart = Split(line, ";")(0)
+    Else
+        commentPart = line
+    End If
+    
+    ' Validar que la línea no esté vacía después de quitar comentarios
+    If Trim(commentPart) = "" Then
+        With Program(index)
+            .opcode = ""
+            .Operand1 = ""
+            .Operand2 = ""
+            .Length = 0
+            .isDataDefinition = False
+        End With
+        Exit Sub
+    End If
     
     ' Separar operandos por coma
     mainParts = Split(commentPart, ",")
@@ -485,7 +501,12 @@ Sub ParseInstructionLine(line As String, index As Integer)
     parts = Split(Trim(mainParts(0)), " ")
     
     With Program(index)
-        .opcode = Trim(parts(0))
+        ' Verificar que parts tenga al menos un elemento
+        If UBound(parts) >= 0 Then
+            .opcode = Trim(parts(0))
+        Else
+            .opcode = ""
+        End If
         
         ' Verificar y asignar operandos de manera segura
         If UBound(parts) >= 1 Then
@@ -499,8 +520,30 @@ Sub ParseInstructionLine(line As String, index As Integer)
         Else
             .Operand2 = ""
         End If
+        
+        ' Asignar longitud y tipo de instrucción
+        If .opcode <> "" And LCase(.opcode) <> "section" And LCase(.opcode) <> "global" And Right(.opcode, 1) <> ":" Then
+            .Length = 4 ' Longitud estándar para instrucciones
+            .bytes = GenerateSimpleBytes(.opcode)
+            
+            ' Verificar si es una definición de datos
+            If LCase(.opcode) = "dd" Or LCase(.opcode) = "dw" Or LCase(.opcode) = "db" Then
+                .isDataDefinition = True
+                Select Case LCase(.opcode)
+                    Case "dd": .Length = 4
+                    Case "dw": .Length = 2
+                    Case "db": .Length = 1
+                End Select
+            Else
+                .isDataDefinition = False
+            End If
+        Else
+            .Length = 0
+            .isDataDefinition = False
+        End If
     End With
 End Sub
+
 
 
 ' Carga los bytes del programa en la RAM simulada
@@ -855,7 +898,6 @@ Sub CreateCacheControlButtons()
     btn.Characters.Text = "Limpiar Caché"
 End Sub
 
-' Crea una hoja con un programa NASM de ejemplo si no existe
 Sub CreateSampleProgramSheet()
     Dim ws As Worksheet
     On Error Resume Next
@@ -873,31 +915,32 @@ Sub CreateSampleProgramSheet()
     ws.Range("A1").value = "Código NASM (Puede editar este código y reiniciar el simulador)"
     ws.Range("A1").Font.Bold = True
     
-    Dim programCode As Variant
-    programCode = Array( _
-        "section .data", _
-        "    num1 dd 10", _
-        "    num2 dd 20", _
-        "    result dd 0", _
-        "", _
-        "section .text", _
-        "    global _start", _
-        "", _
-        "_start:", _  ' <--- AQUÍ ESTABA EL ERROR: FALTABA ESTA LÍNEA
-        "    ; Cargar num1 en EAX", _
-        "    mov eax, [num1]", _
-        "    ; Sumar num2 a EAX", _
-        "    add eax, [num2]", _
-        "    ; Guardar resultado", _
-        "    mov [result], eax", _
-        "    ; Acceso a dirección fija para demostrar caché", _
-        "    mov ebx, [128]", _
-        "    ; Salir del programa", _
-        "    mov eax, 1", _
-        "    xor ebx, ebx", _
-        "    int 0x80")
-        
-    ws.Range("A2").Resize(UBound(programCode) + 1, 1).value = Application.Transpose(programCode)
+    ' Escribir el programa línea por línea
+    Dim row As Integer
+    row = 2
+    
+    ws.Cells(row, 1).value = "section .data": row = row + 1
+    ws.Cells(row, 1).value = "    num1 dd 10": row = row + 1
+    ws.Cells(row, 1).value = "    num2 dd 20": row = row + 1
+    ws.Cells(row, 1).value = "    result dd 0": row = row + 1
+    ws.Cells(row, 1).value = "": row = row + 1
+    ws.Cells(row, 1).value = "section .text": row = row + 1
+    ws.Cells(row, 1).value = "    global _start": row = row + 1
+    ws.Cells(row, 1).value = "": row = row + 1
+    ws.Cells(row, 1).value = "_start:": row = row + 1
+    ws.Cells(row, 1).value = "    ; Cargar num1 en EAX": row = row + 1
+    ws.Cells(row, 1).value = "    mov eax, [num1]": row = row + 1
+    ws.Cells(row, 1).value = "    ; Sumar num2 a EAX": row = row + 1
+    ws.Cells(row, 1).value = "    add eax, [num2]": row = row + 1
+    ws.Cells(row, 1).value = "    ; Guardar resultado": row = row + 1
+    ws.Cells(row, 1).value = "    mov [result], eax": row = row + 1
+    ws.Cells(row, 1).value = "    ; Acceso a dirección fija para demostrar caché": row = row + 1
+    ws.Cells(row, 1).value = "    mov ebx, [128]": row = row + 1
+    ws.Cells(row, 1).value = "    ; Salir del programa": row = row + 1
+    ws.Cells(row, 1).value = "    mov eax, 1": row = row + 1
+    ws.Cells(row, 1).value = "    xor ebx, ebx": row = row + 1
+    ws.Cells(row, 1).value = "    int 0x80": row = row + 1
+    
     ws.Columns("A").ColumnWidth = 50
     ws.Columns("A").WrapText = True
 End Sub
