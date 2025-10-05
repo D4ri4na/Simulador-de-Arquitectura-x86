@@ -454,15 +454,16 @@ Sub TestCacheLRU()
     InitializeCache 1, 16, 2 ' 1KB, bloques de 16 bytes, 2-way
     
     ' Secuencia de accesos que forzará reemplazos LRU
-    Dim addresses() As Long
-    addresses = Array(0, 16, 32, 48, 0, 64, 16, 80, 32, 96)
+Dim addresses As Variant
+addresses = Array(0, 16, 32, 48, 0, 64, 16, 80, 32, 96)
+
+' Y usarlo directamente como Variant en tu código
+Dim i As Long
+For i = LBound(addresses) To UBound(addresses)
+    ' Tu código aquí usando addresses(i)
+Next i
     
-    Dim i As Long
-    For i = 0 To UBound(addresses)
-        AccessMemory addresses(i)
-        ' Pequeña pausa para visualizar
-        Application.Wait (Now + TimeValue("0:00:01"))
-    Next i
+   
 End Sub
 
 Sub RunCustomTest()
@@ -540,7 +541,7 @@ ErrorHandler:
 End Sub
 
 Sub ClearCache()
-    InitializeCache 1, 16, 2 ' Reiniciar con configuración por defecto
+    InitializeCache 1, 16, 2
     MsgBox "Caché limpiada y reinicializada", vbInformation
 End Sub
 
@@ -554,4 +555,8 @@ Sub IniciarSimuladorCache()
     MsgBox "Simulador de Caché LRU inicializado." & vbCrLf & _
            "Use la pestaña 'Pruebas' para realizar accesos a memoria.", vbInformation
 End Sub
+
+
+
+
 
